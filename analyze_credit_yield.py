@@ -13,23 +13,13 @@ OUTPUT_DIR = Path("/Users/chenshuo/Desktop/结果")
 START_DATE = pd.Timestamp("2015-01-01")
 
 TARGET = "中债国债到期收益率:10年"
-BASE_6M_CHANGE = "信贷相较6个月前的变化"
-YOY_6M_CHANGE = "信贷相较6个月前变化的同比"
-FACTORS = [
+CANDIDATE_FACTORS = [
     "中国:金融机构各项贷款余额:人民币:同比",
-    BASE_6M_CHANGE,
-    YOY_6M_CHANGE,
+    "信贷相较6个月前的变化",
+    "信贷相较6个月前变化的同比",
     "信贷相较6个月前变化的同比增量",
     "信贷6个月脉冲",
 ]
-
-FACTOR_LABELS = {
-    "中国:金融机构各项贷款余额:人民币:同比": "贷款余额同比",
-    BASE_6M_CHANGE: "信贷较6个月前变化",
-    YOY_6M_CHANGE: "6个月变化同比",
-    "信贷相较6个月前变化的同比增量": "6个月变化同比增量",
-    "信贷6个月脉冲": "信贷6个月脉冲",
-}
 
 
 def read_workbook(path: Path) -> pd.DataFrame:
@@ -47,24 +37,27 @@ def read_workbook(path: Path) -> pd.DataFrame:
     df = df.rename(columns={"指标名称": "日期"})
     df["日期"] = pd.to_datetime(df["日期"])
     df = df.sort_values("日期").reset_index(drop=True)
-    for col in dict.fromkeys([TARGET, BASE_6M_CHANGE, *FACTORS]):
+    for col in dict.fromkeys([TARGET, *CANDIDATE_FACTORS]):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    if YOY_6M_CHANGE not in df.columns:
-        df[YOY_6M_CHANGE] = df[BASE_6M_CHANGE] / df[BASE_6M_CHANGE].shift(12) - 1
-        df[YOY_6M_CHANGE] = df[YOY_6M_CHANGE].replace([math.inf, -math.inf], math.nan)
-    else:
-        df[YOY_6M_CHANGE] = pd.to_numeric(df[YOY_6M_CHANGE], errors="coerce")
-
     return df
 
 
-def corr_for_lags(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def available_factors(df: pd.DataFrame) -> tuple[list[str], list[str]]:
+    factors = [factor for factor in CANDIDATE_FACTORS if factor in df.columns]
+    skipped = [factor for factor in CANDIDATE_FACTORS if factor not in df.columns]
+    if TARGET not in df.columns:
+        raise ValueError(f"源表缺少目标变量列：{TARGET}")
+    if not factors:
+        raise ValueError("源表没有可分析的候选因子列")
+    return factors, skipped
+
+
+def corr_for_lags(df: pd.DataFrame, factors: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows = []
     chart_rows = []
 
-    for factor in FACTORS:
+    for factor in factors:
         for lag in range(0, 21):
             shifted = df[factor].shift(lag)
             aligned = pd.DataFrame(
@@ -81,7 +74,6 @@ def corr_for_lags(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             rows.append(
                 {
                     "因子": factor,
-                    "因子简称": FACTOR_LABELS[factor],
                     "因子领先10年国债收益率（月）": lag,
                     "相关系数": corr,
                     "相关系数绝对值": abs(corr) if pd.notna(corr) else math.nan,
@@ -96,7 +88,6 @@ def corr_for_lags(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
                 chart_rows.append(
                     {
                         "factor": factor,
-                        "factorLabel": FACTOR_LABELS[factor],
                         "lag": lag,
                         "date": item["日期"].strftime("%Y-%m-%d"),
                         "target": none_or_float(item["target"]),
@@ -127,10 +118,10 @@ def none_or_float(value):
     return float(value)
 
 
-def make_best_summary(corr_df: pd.DataFrame) -> pd.DataFrame:
+def make_best_summary(corr_df: pd.DataFrame, factors: list[str]) -> pd.DataFrame:
     detailed = corr_df[corr_df["因子领先10年国债收益率（月）"].between(1, 20)].copy()
     best_rows = []
-    for factor in FACTORS:
+    for factor in factors:
         part = detailed[detailed["因子"] == factor].dropna(subset=["相关系数"])
         if part.empty:
             continue
@@ -140,7 +131,6 @@ def make_best_summary(corr_df: pd.DataFrame) -> pd.DataFrame:
         best_rows.append(
             {
                 "因子": factor,
-                "因子简称": FACTOR_LABELS[factor],
                 "最强相关领先期（月，按绝对值）": int(best_abs["因子领先10年国债收益率（月）"]),
                 "最强相关系数": best_abs["相关系数"],
                 "最强相关方向": "正相关" if best_abs["相关系数"] >= 0 else "负相关",
@@ -155,14 +145,21 @@ def make_best_summary(corr_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(best_rows)
 
 
-def make_data_sheet(df: pd.DataFrame) -> pd.DataFrame:
-    cols = ["日期", TARGET, *FACTORS]
+def make_data_sheet(df: pd.DataFrame, factors: list[str]) -> pd.DataFrame:
+    cols = ["日期", TARGET, *factors]
     out = df.loc[df["日期"] >= START_DATE, cols].copy()
     out["日期"] = out["日期"].dt.date.astype(str)
     return out
 
 
-def write_excel(best_df: pd.DataFrame, corr_df: pd.DataFrame, data_df: pd.DataFrame, output: Path) -> None:
+def write_excel(
+    best_df: pd.DataFrame,
+    corr_df: pd.DataFrame,
+    data_df: pd.DataFrame,
+    factors: list[str],
+    skipped_factors: list[str],
+    output: Path,
+) -> None:
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         readme = pd.DataFrame(
             [
@@ -171,7 +168,8 @@ def write_excel(best_df: pd.DataFrame, corr_df: pd.DataFrame, data_df: pd.DataFr
                 ["目标变量", TARGET],
                 ["滞后定义", "因子领先10年国债收益率x个月：用t-x期因子对应t期10年国债收益率"],
                 ["汇总口径", "最强相关领先期按相关系数绝对值最大判断；同时给出最大相关系数和最低相关系数"],
-                ["新列处理", f"如果源表没有“{YOY_6M_CHANGE}”，脚本会按“{BASE_6M_CHANGE}/去年同期值-1”自动计算"],
+                ["已分析因子", "；".join(factors)],
+                ["源表缺失并跳过的候选因子", "；".join(skipped_factors) if skipped_factors else "无"],
             ],
             columns=["项目", "说明"],
         )
@@ -191,9 +189,15 @@ def write_excel(best_df: pd.DataFrame, corr_df: pd.DataFrame, data_df: pd.DataFr
                 ws.column_dimensions[letter].width = min(max(max_len + 2, 12), 48)
 
 
-def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFrame, output: Path) -> None:
+def build_html(
+    chart_df: pd.DataFrame,
+    corr_df: pd.DataFrame,
+    best_df: pd.DataFrame,
+    factors: list[str],
+    output: Path,
+) -> None:
     corr_payload = {}
-    for factor in FACTORS:
+    for factor in factors:
         corr_payload[factor] = {}
         part = corr_df[corr_df["因子"] == factor]
         for _, row in part.iterrows():
@@ -205,7 +209,7 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
             }
 
     series_payload = {}
-    for factor in FACTORS:
+    for factor in factors:
         series_payload[factor] = {}
         for lag in range(0, 21):
             part = chart_df[(chart_df["factor"] == factor) & (chart_df["lag"] == lag)]
@@ -218,8 +222,7 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
     data_json = json.dumps(
         {
             "target": TARGET,
-            "factorLabels": FACTOR_LABELS,
-            "factors": FACTORS,
+            "factors": factors,
             "corr": corr_payload,
             "series": series_payload,
             "best": best_payload,
@@ -292,6 +295,7 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
       color: var(--muted);
       margin-bottom: 8px;
       line-height: 1.45;
+      overflow-wrap: anywhere;
     }}
     .metric .value {{
       font-size: 24px;
@@ -519,7 +523,7 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
       payload.factors.forEach((factor) => {{
         const option = document.createElement('option');
         option.value = factor;
-        option.textContent = payload.factorLabels[factor];
+        option.textContent = factor;
         factorSelect.appendChild(option);
       }});
       renderSummary();
@@ -534,7 +538,7 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
         const card = document.createElement('div');
         card.className = 'metric';
         card.innerHTML = `
-          <div class="name">${{escapeHtml(row['因子简称'])}}</div>
+          <div class="name">${{escapeHtml(row['因子'])}}</div>
           <div class="value">${{row['最强相关领先期（月，按绝对值）']}} 期</div>
           <div class="detail">r=${{formatCorr(row['最强相关系数'])}}，${{escapeHtml(row['最强相关方向'])}}，n=${{row['样本数']}}</div>
         `;
@@ -546,7 +550,7 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
       const tbody = document.getElementById('bestTable');
       tbody.innerHTML = payload.best.map((row) => `
         <tr>
-          <td>${{escapeHtml(row['因子简称'])}}</td>
+          <td>${{escapeHtml(row['因子'])}}</td>
           <td>${{row['最强相关领先期（月，按绝对值）']}} 期</td>
           <td>${{formatCorr(row['最强相关系数'])}}</td>
           <td>${{escapeHtml(row['最强相关方向'])}}</td>
@@ -565,7 +569,7 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
       corrValue.textContent = formatCorr(stat.corr);
       sampleValue.textContent = stat.n;
       rangeValue.textContent = `${{stat.start}} 至 ${{stat.end}}`;
-      drawChart(payload.series[factor][lag], payload.factorLabels[factor], lag);
+      drawChart(payload.series[factor][lag], factor, lag);
     }}
 
     function drawChart(data, factorLabel, lag) {{
@@ -758,18 +762,22 @@ def build_html(chart_df: pd.DataFrame, corr_df: pd.DataFrame, best_df: pd.DataFr
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df = read_workbook(SOURCE_FILE)
-    corr_df, chart_df = corr_for_lags(df)
-    best_df = make_best_summary(corr_df)
-    data_df = make_data_sheet(df)
+    factors, skipped_factors = available_factors(df)
+    corr_df, chart_df = corr_for_lags(df, factors)
+    best_df = make_best_summary(corr_df, factors)
+    data_df = make_data_sheet(df, factors)
 
     excel_output = OUTPUT_DIR / "贷款指标_vs_10年国债收益率_相关性汇总.xlsx"
     html_output = OUTPUT_DIR / "贷款指标_vs_10年国债收益率_交互图.html"
 
-    write_excel(best_df, corr_df, data_df, excel_output)
-    build_html(chart_df, corr_df, best_df, html_output)
+    write_excel(best_df, corr_df, data_df, factors, skipped_factors, excel_output)
+    build_html(chart_df, corr_df, best_df, factors, html_output)
 
     print(f"excel={excel_output}")
     print(f"html={html_output}")
+    print("analyzed_factors=" + " | ".join(factors))
+    if skipped_factors:
+        print("skipped_missing_factors=" + " | ".join(skipped_factors))
     print(best_df.to_string(index=False))
 
 
