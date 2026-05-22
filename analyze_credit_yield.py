@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import shutil
+import subprocess
 from pathlib import Path
 
 import openpyxl
 import pandas as pd
 
 
-SOURCE_FILE = Path("/Users/chenshuo/Nutstore Files/我的坚果云/中国_金融机构各项贷款余额_人民币_同比.xlsx")
-OUTPUT_DIR = Path("/Users/chenshuo/Desktop/结果")
+DEFAULT_SOURCE_FILE = Path("/Users/chenshuo/Nutstore Files/我的坚果云/中国_金融机构各项贷款余额_人民币_同比.xlsx")
+DEFAULT_OUTPUT_DIR = Path("/Users/chenshuo/Desktop/结果")
+DEFAULT_REPO_DIR = Path("/Users/chenshuo/Documents/Codex/2026-05-14/files-mentioned-by-the-user-xlsx/lag-analysis")
 START_DATE = pd.Timestamp("2015-01-01")
+EXCEL_NAME = "贷款指标_vs_10年国债收益率_相关性汇总.xlsx"
+HTML_NAME = "贷款指标_vs_10年国债收益率_交互图.html"
+RESULT_SCRIPT_NAME = "贷款指标_vs_10年国债收益率_分析脚本.py"
 
 TARGET = "中债国债到期收益率:10年"
 CANDIDATE_FACTORS = [
@@ -158,12 +165,13 @@ def write_excel(
     data_df: pd.DataFrame,
     factors: list[str],
     skipped_factors: list[str],
+    source_file: Path,
     output: Path,
 ) -> None:
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         readme = pd.DataFrame(
             [
-                ["源文件", str(SOURCE_FILE)],
+                ["源文件", str(source_file)],
                 ["分析开始时间", START_DATE.date().isoformat()],
                 ["目标变量", TARGET],
                 ["滞后定义", "因子领先10年国债收益率x个月：用t-x期因子对应t期10年国债收益率"],
@@ -364,6 +372,29 @@ def build_html(
       padding: 6px 10px;
       background: #fbfcfe;
     }}
+    .chartActions {{
+      display: flex;
+      justify-content: flex-end;
+      margin: 2px 0 12px;
+    }}
+    .saveButton {{
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--ink);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 0 12px;
+    }}
+    .saveButton:hover {{
+      border-color: #98a2b3;
+      background: #f8fafc;
+    }}
+    .saveButton:active {{
+      transform: translateY(1px);
+    }}
     .chartWrap {{
       position: relative;
       width: 100%;
@@ -470,6 +501,9 @@ def build_html(
         <div class="pill">样本数：<strong id="sampleValue">-</strong></div>
         <div class="pill">收益率样本：<strong id="rangeValue">-</strong></div>
       </div>
+      <div class="chartActions">
+        <button class="saveButton" id="saveChartButton" type="button" title="保存当前折线图为PNG图片">保存图片</button>
+      </div>
       <div class="chartWrap" id="chartWrap">
         <svg id="chart" role="img" aria-label="指标与10年国债收益率折线图"></svg>
         <div class="tooltip" id="tooltip"></div>
@@ -509,6 +543,7 @@ def build_html(
     const svg = document.getElementById('chart');
     const chartWrap = document.getElementById('chartWrap');
     const tooltip = document.getElementById('tooltip');
+    const saveChartButton = document.getElementById('saveChartButton');
 
     const fmt = new Intl.NumberFormat('zh-CN', {{ maximumFractionDigits: 4 }});
     const fmt2 = new Intl.NumberFormat('zh-CN', {{ maximumFractionDigits: 2 }});
@@ -648,6 +683,67 @@ def build_html(
       svg.appendChild(overlay);
     }}
 
+    function saveChartImage() {{
+      const viewBox = (svg.getAttribute('viewBox') || '').split(/\\s+/).map(Number);
+      if (viewBox.length !== 4 || viewBox.some(Number.isNaN)) return;
+
+      const width = viewBox[2];
+      const height = viewBox[3];
+      const clonedSvg = svg.cloneNode(true);
+      clonedSvg.querySelectorAll('.hover').forEach(el => el.remove());
+      clonedSvg.querySelectorAll('rect[fill="transparent"]').forEach(el => el.remove());
+      clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clonedSvg.setAttribute('width', width);
+      clonedSvg.setAttribute('height', height);
+
+      const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      background.setAttribute('x', 0);
+      background.setAttribute('y', 0);
+      background.setAttribute('width', width);
+      background.setAttribute('height', height);
+      background.setAttribute('fill', '#ffffff');
+      clonedSvg.insertBefore(background, clonedSvg.firstChild);
+
+      const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+      style.textContent = 'text {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }}';
+      clonedSvg.insertBefore(style, clonedSvg.firstChild);
+
+      const svgText = new XMLSerializer().serializeToString(clonedSvg);
+      const svgBlob = new Blob([svgText], {{ type: 'image/svg+xml;charset=utf-8' }});
+      const svgUrl = URL.createObjectURL(svgBlob);
+      const image = new Image();
+      image.onload = () => {{
+        const scale = Math.max(2, Math.min(3, window.devicePixelRatio || 2));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        const context = canvas.getContext('2d');
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(svgUrl);
+
+        canvas.toBlob((blob) => {{
+          if (!blob) return;
+          const factor = factorSelect.value;
+          const lag = Number(lagRange.value);
+          const fileUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = fileUrl;
+          link.download = `lag-analysis_${{safeFilename(factor)}}_lead-${{lag}}.png`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(fileUrl), 1000);
+        }}, 'image/png');
+      }};
+      image.onerror = () => {{
+        URL.revokeObjectURL(svgUrl);
+        alert('图片生成失败，请刷新页面后重试。');
+      }};
+      image.src = svgUrl;
+    }}
+
     function drawGrid(width, height, margin, plotW, plotH, y1Domain, y1Scale, y2Domain, y2Scale, xMin, xMax, xScale) {{
       const gridGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       svg.appendChild(gridGroup);
@@ -748,8 +844,17 @@ def build_html(
         .replaceAll("'", '&#039;');
     }}
 
+    function safeFilename(value) {{
+      return String(value)
+        .replace(/[\\\\/:*?"<>|\\s]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 80);
+    }}
+
     factorSelect.addEventListener('change', update);
     lagRange.addEventListener('input', update);
+    saveChartButton.addEventListener('click', saveChartImage);
     window.addEventListener('resize', update);
     init();
   </script>
@@ -759,26 +864,97 @@ def build_html(
     output.write_text(html, encoding="utf-8")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate lag-correlation outputs from the source workbook and publish them to GitHub Pages."
+    )
+    parser.add_argument("--source-file", type=Path, default=DEFAULT_SOURCE_FILE)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--repo-dir", type=Path, default=DEFAULT_REPO_DIR)
+    parser.add_argument("--start-date", default=START_DATE.date().isoformat())
+    parser.add_argument("--commit-message", default="Update lag analysis results")
+    parser.add_argument("--no-git", action="store_true", help="Generate outputs and copy repository files, but skip commit/push.")
+    parser.add_argument("--dry-run", action="store_true", help="Generate outputs, then show git changes without committing or pushing.")
+    return parser.parse_args()
+
+
+def run_command(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True)
+    if result.returncode != 0:
+        command = " ".join(cmd)
+        raise RuntimeError(f"Command failed: {command}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+    return result
+
+
+def sync_repository_files(script_file: Path, html_output: Path, excel_output: Path, repo_dir: Path) -> None:
+    if not repo_dir.exists():
+        raise FileNotFoundError(f"Git repository directory does not exist: {repo_dir}")
+    shutil.copy2(html_output, repo_dir / "index.html")
+    shutil.copy2(excel_output, repo_dir / EXCEL_NAME)
+    shutil.copy2(script_file, repo_dir / "analyze_credit_yield.py")
+
+
+def git_status(repo_dir: Path) -> str:
+    return run_command(["git", "status", "--short"], cwd=repo_dir).stdout.strip()
+
+
+def publish_repository(repo_dir: Path, commit_message: str, dry_run: bool) -> None:
+    add_paths = ["index.html", "analyze_credit_yield.py", EXCEL_NAME]
+    add_paths.extend(path.name for path in [repo_dir / "README.md", repo_dir / ".nojekyll"] if path.exists())
+    run_command(["git", "add", *add_paths], cwd=repo_dir)
+    status = git_status(repo_dir)
+    if not status:
+        print("git_status=clean")
+        return
+    print("git_status_before_commit:\n" + status)
+    if dry_run:
+        print("dry_run=true; skipped commit and push")
+        return
+    run_command(["git", "commit", "-m", commit_message], cwd=repo_dir)
+    run_command(["git", "push", "origin", "main"], cwd=repo_dir)
+    run_command(["git", "push", "origin", "main:gh-pages"], cwd=repo_dir)
+    remote = run_command(["git", "ls-remote", "origin", "refs/heads/main", "refs/heads/gh-pages"], cwd=repo_dir)
+    print("remote_refs:\n" + remote.stdout.strip())
+
+
 def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    df = read_workbook(SOURCE_FILE)
+    global START_DATE
+
+    args = parse_args()
+    START_DATE = pd.Timestamp(args.start_date)
+    source_file = args.source_file.expanduser().resolve()
+    output_dir = args.output_dir.expanduser().resolve()
+    repo_dir = args.repo_dir.expanduser().resolve()
+    script_file = Path(__file__).resolve()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    df = read_workbook(source_file)
     factors, skipped_factors = available_factors(df)
     corr_df, chart_df = corr_for_lags(df, factors)
     best_df = make_best_summary(corr_df, factors)
     data_df = make_data_sheet(df, factors)
 
-    excel_output = OUTPUT_DIR / "贷款指标_vs_10年国债收益率_相关性汇总.xlsx"
-    html_output = OUTPUT_DIR / "贷款指标_vs_10年国债收益率_交互图.html"
+    excel_output = output_dir / EXCEL_NAME
+    html_output = output_dir / HTML_NAME
+    result_script_output = output_dir / RESULT_SCRIPT_NAME
 
-    write_excel(best_df, corr_df, data_df, factors, skipped_factors, excel_output)
+    write_excel(best_df, corr_df, data_df, factors, skipped_factors, source_file, excel_output)
     build_html(chart_df, corr_df, best_df, factors, html_output)
+    shutil.copy2(script_file, result_script_output)
+    sync_repository_files(script_file, html_output, excel_output, repo_dir)
 
     print(f"excel={excel_output}")
     print(f"html={html_output}")
+    print(f"script={result_script_output}")
+    print(f"repo={repo_dir}")
     print("analyzed_factors=" + " | ".join(factors))
     if skipped_factors:
         print("skipped_missing_factors=" + " | ".join(skipped_factors))
     print(best_df.to_string(index=False))
+    if args.no_git:
+        print("no_git=true; skipped commit and push")
+    else:
+        publish_repository(repo_dir, args.commit_message, args.dry_run)
 
 
 if __name__ == "__main__":
