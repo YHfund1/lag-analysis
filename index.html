@@ -303,13 +303,13 @@
     const tooltip = document.getElementById('tooltip');
     const saveChartButton = document.getElementById('saveChartButton');
 
-    const fmt = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 });
-    const fmt2 = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 });
+    const fmt = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmt2 = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const dateFmt = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit' });
 
     function formatCorr(value) {
       if (value === null || Number.isNaN(value)) return '-';
-      return value.toFixed(4);
+      return value.toFixed(2);
     }
 
     function init() {
@@ -394,8 +394,8 @@
       drawPath(data, (d) => xScale(new Date(d.date + 'T00:00:00').getTime()), (d) => y1Scale(d.target), '#2563eb', 2.2);
       drawPath(data, (d) => xScale(new Date(d.date + 'T00:00:00').getTime()), (d) => y2Scale(d.factorShifted), '#0f9f6e', 2.2);
 
-      addText(margin.left, 18, '10年国债收益率 %', '#2563eb', 'start', 12, 600);
-      addText(width - margin.right, 18, `${factorLabel}，领先 ${lag} 期`, '#0f9f6e', 'end', 12, 600);
+      addText(margin.left, 18, '10年国债收益率 %', '#111827', 'start', 14, 700);
+      addText(width - margin.right, 18, `${factorLabel}，领先 ${lag} 期`, '#111827', 'end', 14, 700);
 
       const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       overlay.setAttribute('x', margin.left);
@@ -509,15 +509,15 @@
         const yValue = y1Domain[0] + (i / 5) * (y1Domain[1] - y1Domain[0]);
         const y = y1Scale(yValue);
         line(margin.left, y, margin.left + plotW, y, '#d8dee8', 1, gridGroup);
-        addText(margin.left - 10, y + 4, fmt.format(yValue), '#667085', 'end', 11, 400);
+        addText(margin.left - 10, y + 4, fmt.format(yValue), '#111827', 'end', 13, 700);
         const rightValue = y2Domain[0] + (i / 5) * (y2Domain[1] - y2Domain[0]);
-        addText(width - margin.right + 10, y + 4, compactNumber(rightValue), '#667085', 'start', 11, 400);
+        addText(width - margin.right + 10, y + 4, compactNumber(rightValue), '#111827', 'start', 13, 700);
       }
       for (let i = 0; i <= 6; i++) {
         const xValue = xMin + (i / 6) * (xMax - xMin);
         const x = xScale(xValue);
         line(x, margin.top, x, margin.top + plotH, '#eef1f5', 1, gridGroup);
-        addText(x, height - 18, dateFmt.format(new Date(xValue)), '#667085', 'middle', 11, 400);
+        addText(x, height - 18, dateFmt.format(new Date(xValue)), '#111827', 'middle', 13, 700);
       }
       line(margin.left, margin.top, margin.left, margin.top + plotH, '#9aa4b2', 1, gridGroup);
       line(width - margin.right, margin.top, width - margin.right, margin.top + plotH, '#9aa4b2', 1, gridGroup);
