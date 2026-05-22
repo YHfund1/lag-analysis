@@ -372,7 +372,7 @@
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
       svg.innerHTML = '';
 
-      const margin = { top: 28, right: 78, bottom: 48, left: 62 };
+      const margin = { top: 36, right: 100, bottom: 62, left: 78 };
       const plotW = width - margin.left - margin.right;
       const plotH = height - margin.top - margin.bottom;
       if (!data || data.length < 2) return;
@@ -394,8 +394,8 @@
       drawPath(data, (d) => xScale(new Date(d.date + 'T00:00:00').getTime()), (d) => y1Scale(d.target), '#2563eb', 2.2);
       drawPath(data, (d) => xScale(new Date(d.date + 'T00:00:00').getTime()), (d) => y2Scale(d.factorShifted), '#0f9f6e', 2.2);
 
-      addText(margin.left, 18, '10年国债收益率 %', '#111827', 'start', 14, 700);
-      addText(width - margin.right, 18, `${factorLabel}，领先 ${lag} 期`, '#111827', 'end', 14, 700);
+      addText(margin.left, 24, '10年国债收益率 %', '#2563eb', 'start', 16, 800);
+      addText(width - margin.right, 24, `${factorLabel}，领先 ${lag} 期`, '#0f9f6e', 'end', 16, 800);
 
       const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       overlay.setAttribute('x', margin.left);
@@ -509,15 +509,15 @@
         const yValue = y1Domain[0] + (i / 5) * (y1Domain[1] - y1Domain[0]);
         const y = y1Scale(yValue);
         line(margin.left, y, margin.left + plotW, y, '#d8dee8', 1, gridGroup);
-        addText(margin.left - 10, y + 4, fmt.format(yValue), '#111827', 'end', 13, 700);
+        addText(margin.left - 12, y + 5, fmt.format(yValue), '#111827', 'end', 15, 800);
         const rightValue = y2Domain[0] + (i / 5) * (y2Domain[1] - y2Domain[0]);
-        addText(width - margin.right + 10, y + 4, compactNumber(rightValue), '#111827', 'start', 13, 700);
+        addText(width - margin.right + 12, y + 5, compactNumber(rightValue), '#111827', 'start', 15, 800);
       }
       for (let i = 0; i <= 6; i++) {
         const xValue = xMin + (i / 6) * (xMax - xMin);
         const x = xScale(xValue);
         line(x, margin.top, x, margin.top + plotH, '#eef1f5', 1, gridGroup);
-        addText(x, height - 18, dateFmt.format(new Date(xValue)), '#111827', 'middle', 13, 700);
+        addText(x, height - 24, dateFmt.format(new Date(xValue)), '#111827', 'middle', 15, 800);
       }
       line(margin.left, margin.top, margin.left, margin.top + plotH, '#9aa4b2', 1, gridGroup);
       line(width - margin.right, margin.top, width - margin.right, margin.top + plotH, '#9aa4b2', 1, gridGroup);
